@@ -1,0 +1,595 @@
+<?php
+
+/**
+ * @file
+ * Field module functionality for the File module.
+ */
+
+/**
+ * Implements hook_field_info().
+ */
+function duofile_field_info() {
+  return array(
+    'duofile' => array(
+      'label' => t('Duo'),
+      'description' => t('This field stores the ID of a file as an integer value.'),
+      'settings' => array(
+        'display_field' => 0,
+        'display_default' => 0,
+        'uri_scheme' => variable_get('duofile_default_scheme', 'public'),
+      ),
+      'instance_settings' => array(
+        'fid1' => array(
+          'file_extensions' => 'mp3',
+          'file_directory' => '',
+          'max_filesize' => '',
+        ),
+        'fid2' => array(
+          'file_extensions' => 'ogg',
+          'file_directory' => '',
+          'max_filesize' => '',
+        ),
+        'description_field' => 0,
+      ),
+      'default_widget' => 'duofile_generic',
+      'default_formatter' => 'duofile_default',
+    ),
+  );
+}
+
+/**
+ * Implements hook_field_settings_form().
+ */
+function duofile_field_settings_form($field, $instance, $has_data) {
+  $defaults = field_info_field_settings($field['type']);
+  $settings = array_merge($defaults, $field['settings']);
+
+  $form['#attached']['js'][] = drupal_get_path('module', 'file') . '/file.js';
+
+  $form['display_field'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Enable <em>Display</em> field'),
+    '#default_value' => $settings['display_field'],
+    '#description' => t('The display option allows users to choose if a file should be shown when viewing the content.'),
+  );
+  $form['display_default'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Files displayed by default'),
+    '#default_value' => $settings['display_default'],
+    '#description' => t('This setting only has an effect if the display option is enabled.'),
+  );
+
+  $scheme_options = array();
+  foreach (file_get_stream_wrappers(STREAM_WRAPPERS_WRITE_VISIBLE) as $scheme => $stream_wrapper) {
+    $scheme_options[$scheme] = $stream_wrapper['name'];
+  }
+  $form['uri_scheme'] = array(
+    '#type' => 'radios',
+    '#title' => t('Upload destination'),
+    '#options' => $scheme_options,
+    '#default_value' => $settings['uri_scheme'],
+    '#description' => t('Select where the final files should be stored. Private file storage has significantly more overhead than public files, but allows restricted access to files within this field.'),
+    '#disabled' => $has_data,
+  );
+
+  return $form;
+}
+
+/**
+ * Implements hook_field_instance_settings_form().
+ */
+function duofile_field_instance_settings_form($field, $instance) {
+  $settings = $instance['settings'];
+
+  $form['fid1'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Setings for 1st file'),
+    '#collapsible' => TRUE,
+    '#collapsed' => TRUE,
+    );
+
+  $form['fid1']['file_directory'] = array(
+    '#type' => 'textfield',
+    '#title' => t('File directory'),
+    '#default_value' => $settings['fid1']['file_directory'],
+    '#description' => t('Optional subdirectory within the upload destination where files will be stored. Do not include preceding or trailing slashes.'),
+    '#element_validate' => array('_file_generic_settings_file_directory_validate'),
+    '#weight' => 3,
+  );
+
+  // Make the extension list a little more human-friendly by comma-separation.
+  $extensions = str_replace(' ', ', ', $settings['fid1']['file_extensions']);
+  $form['fid1']['file_extensions'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Allowed file extensions'),
+    '#default_value' => $extensions,
+    '#description' => t('Separate extensions with a space or comma and do not include the leading dot.'),
+    '#element_validate' => array('_file_generic_settings_extensions'),
+    '#weight' => 1,
+    '#maxlength' => 256,
+    // By making this field required, we prevent a potential security issue
+    // that would allow files of any type to be uploaded.
+    '#required' => TRUE,
+  );
+
+  $form['fid1']['max_filesize'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Maximum upload size'),
+    '#default_value' => $settings['fid1']['max_filesize'],
+    '#description' => t('Enter a value like "512" (bytes), "80 KB" (kilobytes) or "50 MB" (megabytes) in order to restrict the allowed file size. If left empty the file sizes will be limited only by PHP\'s maximum post and file upload sizes (current limit <strong>%limit</strong>).', array('%limit' => format_size(file_upload_max_size()))),
+    '#size' => 10,
+    '#element_validate' => array('_file_generic_settings_max_filesize'),
+    '#weight' => 5,
+  );
+
+  $form['fid2'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Setings for 2nd file'),
+    '#collapsible' => TRUE,
+    '#collapsed' => TRUE,
+  );
+  $form['fid2']['file_directory'] = array(
+    '#type' => 'textfield',
+    '#title' => t('File directory'),
+    '#default_value' => $settings['fid2']['file_directory'],
+    '#description' => t('Optional subdirectory within the upload destination where files will be stored. Do not include preceding or trailing slashes.'),
+    '#element_validate' => array('_file_generic_settings_file_directory_validate'),
+    '#weight' => 3,
+  );
+
+  // Make the extension list a little more human-friendly by comma-separation.
+  $extensions = str_replace(' ', ', ', $settings['fid2']['file_extensions']);
+  $form['fid2']['file_extensions'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Allowed file extensions'),
+    '#default_value' => $extensions,
+    '#description' => t('Separate extensions with a space or comma and do not include the leading dot.'),
+    '#element_validate' => array('_file_generic_settings_extensions'),
+    '#weight' => 1,
+    '#maxlength' => 256,
+    // By making this field required, we prevent a potential security issue
+    // that would allow files of any type to be uploaded.
+    '#required' => TRUE,
+  );
+
+  $form['fid2']['max_filesize'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Maximum upload size'),
+    '#default_value' => $settings['fid2']['max_filesize'],
+    '#description' => t('Enter a value like "512" (bytes), "80 KB" (kilobytes) or "50 MB" (megabytes) in order to restrict the allowed file size. If left empty the file sizes will be limited only by PHP\'s maximum post and file upload sizes (current limit <strong>%limit</strong>).', array('%limit' => format_size(file_upload_max_size()))),
+    '#size' => 10,
+    '#element_validate' => array('_file_generic_settings_max_filesize'),
+    '#weight' => 5,
+  );
+
+  $form['description_field'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Enable <em>Description</em> field'),
+    '#default_value' => isset($settings['description_field']) ? $settings['description_field'] : '',
+    '#description' => t('The description field allows users to enter a description about the uploaded file.'),
+    '#parents' => array('instance', 'settings', 'description_field'),
+    '#weight' => 11,
+  );
+
+  return $form;
+}
+
+/**
+ * Implements hook_field_formatter_info().
+ */
+function duofile_field_formatter_info() {
+  return array(
+    'duofile_default' => array(
+      'label' => t('Generic duofile'),
+      'field types' => array('duofile'),
+    ),
+    'duofile_table' => array(
+      'label' => t('Table of duofiles'),
+      'field types' => array('duofile'),
+    ),
+    'duofile_url1' => array(
+      'label' => t('URL to 1st duofile'),
+      'field types' => array('duofile'),
+    ),
+    'duofile_url2' => array(
+      'label' => t('URL to 2nd duofile'),
+      'field types' => array('duofile'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_field_widget_info().
+ */
+function duofile_field_widget_info() {
+  return array(
+    'duofile_generic' => array(
+      'label' => t('Duofile'),
+      'field types' => array('duofile'),
+      'settings' => array(
+        'progress_indicator' => 'throbber',
+      ),
+      'behaviors' => array(
+        'multiple values' => FIELD_BEHAVIOR_CUSTOM,
+        'default value' => FIELD_BEHAVIOR_NONE,
+      ),
+    ),
+  );
+}
+
+/**
+ * Implements hook_field_widget_settings_form().
+ */
+function duofile_field_widget_settings_form($field, $instance) {
+  $widget = $instance['widget'];
+  $settings = $widget['settings'];
+
+  $form['progress_indicator'] = array(
+    '#type' => 'radios',
+    '#title' => t('Progress indicator'),
+    '#options' => array(
+      'throbber' => t('Throbber'),
+      'bar' => t('Bar with progress meter'),
+    ),
+    '#default_value' => $settings['progress_indicator'],
+    '#description' => t('The throbber display does not show the status of uploads but takes up less space. The progress bar is helpful for monitoring progress on large uploads.'),
+    '#weight' => 16,
+    '#access' => file_progress_implementation(),
+  );
+
+  return $form;
+}
+
+/**
+ * Implements hook_field_widget_form().
+ */
+function duofile_field_widget_form(&$form, &$form_state, $field, $instance, $langcode, $items, $delta, $element) {
+
+  $defaults = array(
+    'fid' => 0,
+    'display' => !empty($field['settings']['display_default']),
+    'description' => '',
+  );
+
+  // Load the items for form rebuilds from the field state as they might not be
+  // in $form_state['values'] because of validation limitations. Also, they are
+  // only passed in as $items when editing existing entities.
+  $field_state = field_form_get_state($element['#field_parents'], $field['field_name'], $langcode, $form_state);
+  if (isset($field_state['items'])) {
+    $items = $field_state['items'];
+  }
+
+  // Essentially we use the managed_file type, extended with some enhancements.
+  $element_info = element_info('managed_file');
+  //
+  $element += array(
+    'fid1' => array(
+      '#type' => 'managed_file',
+      '#upload_location' => duofile_field_widget_uri($field, $instance, 'fid1'),
+      '#upload_validators' => duofile_field_widget_upload_validators($field, $instance, 'fid1'),
+      '#value_callback' => 'duofile_field_widget_value',
+      '#process' => array_merge($element_info['#process'], array('duofile_field_widget_process')),
+      '#progress_indicator' => $instance['widget']['settings']['progress_indicator'],
+      // Allows this field to return an array instead of a single value.
+      '#extended' => TRUE,
+    ),
+    'fid2' => array(
+      '#type' => 'managed_file',
+      '#upload_location' => duofile_field_widget_uri($field, $instance, 'fid2'),
+      '#upload_validators' => duofile_field_widget_upload_validators($field, $instance, 'fid2'),
+      '#value_callback' => 'duofile_field_widget_value',
+      '#process' => array_merge($element_info['#process'], array('duofile_field_widget_process')),
+      '#progress_indicator' => $instance['widget']['settings']['progress_indicator'],
+      // Allows this field to return an array instead of a single value.
+      '#extended' => TRUE,
+    ),
+  );
+
+  if ($field['cardinality'] == 1) {
+    // Set the default value.
+    $element['fid1']['#default_value'] = !empty($items) ? $items[0] : $defaults;
+    // If there's only one field, return it as delta 0.
+    if (empty($element['fid1']['#default_value'])) {
+      $element['#description'] = theme('file_upload_help', array('description' => $element['#description'], 'upload_validators' => $element['fid1']['#upload_validators']));
+    }
+    $element['fid2']['#default_value'] = !empty($items) ? $items[0] : $defaults;
+    // If there's only one field, return it as delta 0.
+    if (empty($element['fid1']['#default_value'])) {
+      $element['#description'] = theme('file_upload_help', array('description' => $element['#description'], 'upload_validators' => $element['fid2']['#upload_validators']));
+    }
+    $elements = array($element);
+  }
+  else {
+    // If there are multiple values, add an element for each existing one.
+    foreach ($items as $item) {
+      $elements[$delta] = $element;
+      $elements[$delta]['#default_value'] = $item;
+      $elements[$delta]['#weight'] = $delta;
+      $delta++;
+    }
+    // And then add one more empty row for new uploads except when this is a
+    // programmed form as it is not necessary.
+    if (($field['cardinality'] == FIELD_CARDINALITY_UNLIMITED || $delta < $field['cardinality']) && empty($form_state['programmed'])) {
+      $elements[$delta] = $element;
+      $elements[$delta]['#default_value'] = $defaults;
+      $elements[$delta]['#weight'] = $delta;
+      $elements[$delta]['#required'] = ($element['#required'] && $delta == 0);
+    }
+    // The group of elements all-together need some extra functionality
+    // after building up the full list (like draggable table rows).
+    $elements['#file_upload_delta'] = $delta;
+    $elements['#theme'] = 'file_widget_multiple';
+    $elements['#theme_wrappers'] = array('fieldset');
+    $elements['#process'] = array('file_field_widget_process_multiple');
+    $elements['#title'] = $element['#title'];
+    $elements['#description'] = $element['#description'];
+    $elements['#field_name'] = $element['#field_name'];
+    $elements['#language'] = $element['#language'];
+    $elements['#display_field'] = $field['settings']['display_field'];
+
+    // Add some properties that will eventually be added to the file upload
+    // field. These are added here so that they may be referenced easily through
+    // a hook_form_alter().
+    $elements['#file_upload_title'] = t('Add a new file');
+    $elements['#file_upload_description'] = theme('file_upload_help', array('description' => '', 'upload_validators' => $elements[0]['#upload_validators']));
+  }
+
+  return $elements;
+}
+
+/**
+ * Implements hook_field_formatter_view().
+ */
+function duofile_field_formatter_view($entity_type, $entity, $field, $instance, $langcode, $items, $display) {
+  $element = array();
+
+  switch ($display['type']) {
+    case 'duofile_default':
+      foreach ($items as $delta => $item) {
+        $element[$delta] = array(
+          '#theme' => 'duofile_link',
+          '#file' => (object) $item,
+        );
+      }
+      break;
+
+    case 'duofile_url_plain':
+      foreach ($items as $delta => $item) {
+        $element[$delta] = array('#markup' => empty($item['uri']) ? '' : file_create_url($item['uri']));
+      }
+      break;
+
+    case 'duofile_table':
+      if (!empty($items)) {
+        // Display all values in a single element..
+        $element[0] = array(
+          '#theme' => 'file_formatter_table',
+          '#items' => $items,
+        );
+      }
+      break;
+  }
+
+  return $element;
+}
+
+/**
+ * Returns HTML for a link to a file.
+ *
+ * @param $variables
+ *   An associative array containing:
+ *   - file: A file object to which the link will be created.
+ *   - icon_directory: (optional) A path to a directory of icons to be used for
+ *     files. Defaults to the value of the "file_icon_directory" variable.
+ *
+ * @ingroup themeable
+ */
+function theme_duofile_link($variables) {
+  $file = $variables['file'];
+  $icon_directory = $variables['icon_directory'];
+
+  $url = file_create_url($file->uri);
+  $icon = theme('file_icon', array('file' => $file, 'icon_directory' => $icon_directory));
+
+  // Set options as per anchor format described at
+  // http://microformats.org/wiki/file-format-examples
+  $options = array(
+    'attributes' => array(
+      'type' => $file->filemime . '; length=' . $file->filesize,
+    ),
+  );
+
+  // Use the description as the link text if available.
+  if (empty($file->description)) {
+    $link_text = $file->filename;
+  }
+  else {
+    $link_text = $file->description;
+    $options['attributes']['title'] = check_plain($file->filename);
+  }
+
+  return '<span class="file">' . $icon . ' ' . l($link_text, $url, $options) . '</span>';
+}
+
+/**
+ * Returns HTML for a file attachments table.
+ *
+ * @param $variables
+ *   An associative array containing:
+ *   - items: An array of file attachments.
+ *
+ * @ingroup themeable
+ */
+function theme_duofile_formatter_table($variables) {
+  $header = array(t('Attachment'), t('Size'));
+  $rows = array();
+  foreach ($variables['items'] as $delta => $item) {
+    $rows[] = array(
+      theme('file_link', array('file' => (object) $item)),
+      format_size($item['filesize']),
+    );
+  }
+
+  return empty($rows) ? '' : theme('table', array('header' => $header, 'rows' => $rows));
+}
+
+
+function duofile_field_widget_uri($field, $instance, $part) {
+  $destination = trim($instance['settings'][$part]['file_directory'], '/');
+  return $field['settings']['uri_scheme'] . '://' . $destination;
+}
+
+/**
+ * The #value_callback for the file_generic field element.
+ */
+function duofile_field_widget_value($element, $input = FALSE, $form_state) {
+  if ($input) {
+    // Checkboxes lose their value when empty.
+    // If the display field is present make sure its unchecked value is saved.
+    $field = field_widget_field($element, $form_state);
+    if (empty($input['display'])) {
+      $input['display'] = $field['settings']['display_field'] ? 0 : 1;
+    }
+  }
+
+  // We depend on the managed file element to handle uploads.
+  $return = file_managed_file_value($element, $input, $form_state);
+
+  // Ensure that all the required properties are returned even if empty.
+  $return += array(
+    'fid' => 0,
+    'display' => 1,
+    'description' => '',
+  );
+
+  return $return;
+}
+
+/**
+ * An element #process callback for the file_generic field type.
+ *
+ * Expands the file_generic type to include the description and display fields.
+ */
+function duofile_field_widget_process($element, &$form_state, $form) {
+  $item = $element['#value'];
+  $item['fid'] = $element['fid']['#value'];
+
+  $field = field_widget_field($element, $form_state);
+  $instance = field_widget_instance($element, $form_state);
+  $settings = $instance['widget']['settings'];
+
+  $element['#theme'] = 'file_widget';
+
+  // Add the display field if enabled.
+  if (!empty($field['settings']['display_field']) && $item['fid']) {
+    $element['display'] = array(
+      '#type' => empty($item['fid']) ? 'hidden' : 'checkbox',
+      '#title' => t('Include file in display'),
+      '#value' => isset($item['display']) ? $item['display'] : $field['settings']['display_default'],
+      '#attributes' => array('class' => array('file-display')),
+    );
+  }
+  else {
+    $element['display'] = array(
+      '#type' => 'hidden',
+      '#value' => '1',
+    );
+  }
+
+  // Add the description field if enabled.
+  if (!empty($instance['settings']['description_field']) && $item['fid']) {
+    $element['description'] = array(
+      '#type' => variable_get('file_description_type', 'textfield'),
+      '#title' => t('Description'),
+      '#value' => isset($item['description']) ? $item['description'] : '',
+      '#maxlength' => variable_get('file_description_length', 128),
+      '#description' => t('The description may be used as the label of the link to the file.'),
+    );
+  }
+
+  // Adjust the Ajax settings so that on upload and remove of any individual
+  // file, the entire group of file fields is updated together.
+  if ($field['cardinality'] != 1) {
+    $parents = array_slice($element['#array_parents'], 0, -1);
+    $new_path = 'file/ajax/' . implode('/', $parents) . '/' . $form['form_build_id']['#value'];
+    $field_element = drupal_array_get_nested_value($form, $parents);
+    $new_wrapper = $field_element['#id'] . '-ajax-wrapper';
+    foreach (element_children($element) as $key) {
+      if (isset($element[$key]['#ajax'])) {
+        $element[$key]['#ajax']['path'] = $new_path;
+        $element[$key]['#ajax']['wrapper'] = $new_wrapper;
+      }
+    }
+    unset($element['#prefix'], $element['#suffix']);
+  }
+
+  // Add another submit handler to the upload and remove buttons, to implement
+  // functionality needed by the field widget. This submit handler, along with
+  // the rebuild logic in file_field_widget_form() requires the entire field,
+  // not just the individual item, to be valid.
+  foreach (array('upload_button', 'remove_button') as $key) {
+    $element[$key]['#submit'][] = 'file_field_widget_submit';
+    $element[$key]['#limit_validation_errors'] = array(array_slice($element['#parents'], 0, -1));
+  }
+
+  return $element;
+}
+
+/**
+ * An element #process callback for a group of file_generic fields.
+ *
+ * Adds the weight field to each row so it can be ordered and adds a new Ajax
+ * wrapper around the entire group so it can be replaced all at once.
+ */
+function duofile_field_widget_process_multiple($element, &$form_state, $form) {
+  $element_children = element_children($element, TRUE);
+  $count = count($element_children);
+
+  foreach ($element_children as $delta => $key) {
+    if ($key != $element['#file_upload_delta']) {
+      $description = _file_field_get_description_from_element($element[$key]);
+      $element[$key]['_weight'] = array(
+        '#type' => 'weight',
+        '#title' => $description ? t('Weight for @title', array('@title' => $description)) : t('Weight for new file'),
+        '#title_display' => 'invisible',
+        '#delta' => $count,
+        '#default_value' => $delta,
+      );
+    }
+    else {
+      // The title needs to be assigned to the upload field so that validation
+      // errors include the correct widget label.
+      $element[$key]['#title'] = $element['#title'];
+      $element[$key]['_weight'] = array(
+        '#type' => 'hidden',
+        '#default_value' => $delta,
+      );
+    }
+  }
+
+  // Add a new wrapper around all the elements for Ajax replacement.
+  $element['#prefix'] = '<div id="' . $element['#id'] . '-ajax-wrapper">';
+  $element['#suffix'] = '</div>';
+
+  return $element;
+}
+
+function duofile_field_widget_upload_validators($field, $instance, $part) {
+  // Cap the upload size according to the PHP limit.
+  $max_filesize = parse_size(file_upload_max_size());
+  if (!empty($instance['settings'][$part]['max_filesize']) && parse_size($instance['settings'][$part]['max_filesize']) < $max_filesize) {
+    $max_filesize = parse_size($instance['settings'][$part]['max_filesize']);
+  }
+
+  $validators = array();
+
+  // There is always a file size limit due to the PHP server limit.
+  $validators['file_validate_size'] = array($max_filesize);
+
+  // Add the extension check if necessary.
+  if (!empty($instance['settings'][$part]['file_extensions'])) {
+    $validators['file_validate_extensions'] = array($instance['settings'][$part]['file_extensions']);
+  }
+
+  return $validators;
+}
